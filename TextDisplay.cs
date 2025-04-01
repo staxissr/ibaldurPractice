@@ -15,7 +15,7 @@ namespace ibaldurPractice
         public bool active;
 
         public TextDisplay(Vector2 pos, Vector2 size, string text, int fontSize) {
-            
+            this.size = size;
             if (!canvas) { CreateCanvas(); }
 
             textObj = new GameObject();
@@ -23,7 +23,7 @@ namespace ibaldurPractice
             textObj.AddComponent<CanvasRenderer>();
             RectTransform textTransform = textObj.AddComponent<RectTransform>();
             textTransform.sizeDelta = size;
-            this.size = size;
+            
 
             CanvasGroup group  = textObj.AddComponent<CanvasGroup>();
             group.interactable = false;
@@ -34,7 +34,7 @@ namespace ibaldurPractice
             t.text = text;
             t.fontSize = fontSize;
             t.color = Color.white;
-            Vector2 position = new Vector2((pos.x + size.x / 2f) / 1920f, (1080f - (pos.y + size.y / 2f)) / 1080f);
+            Vector2 position = new Vector2((pos.x + size.x / 2f) / size.x, (size.y - (pos.y + size.y / 2f)) / size.y);
             textTransform.anchorMin = position;
             textTransform.anchorMax = position;
             GameObject.DontDestroyOnLoad(textObj);
@@ -47,7 +47,7 @@ namespace ibaldurPractice
             canvas.AddComponent<Canvas>().renderMode = RenderMode.ScreenSpaceOverlay;
             CanvasScaler scaler = canvas.AddComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1920f, 1080f);
+            scaler.referenceResolution = new Vector2(size.x, size.y);
             canvas.AddComponent<GraphicRaycaster>();
             GameObject.DontDestroyOnLoad(canvas);
         }

@@ -9,6 +9,7 @@ using HutongGames.PlayMaker.Actions;
 using HutongGames.PlayMaker;
 using System.Linq;
 using GlobalEnums;
+using System.IO;
 
 namespace ibaldurPractice
 {
@@ -26,7 +27,12 @@ namespace ibaldurPractice
         public int damage = 0;
         public int slash = 0;
         public int shadeWaiting = 0;
-        FrameCounter frameCounter;
+        public int lastDelayedAttack = 0;
+        public bool shadeYWrong = false;
+        public bool recentSuccess = false;
+        public FrameCounter frameCounter;
+        const string logPath = "ibaldurPracticeLog.csv";
+        public string logText = "";
         TextDisplay textDisplay;
         internal static ibaldurPractice Instance { get; private set; }
 
@@ -34,7 +40,7 @@ namespace ibaldurPractice
 
         public override string GetVersion()
         {
-            return "1.0";
+            return "1.1";
         }
 
         public override void Initialize()
@@ -61,7 +67,14 @@ namespace ibaldurPractice
             GameObject frameCounterGO = new GameObject("FrameCounter");
             frameCounter = frameCounterGO.AddComponent<FrameCounter>();
             GameObject.DontDestroyOnLoad(frameCounterGO);
-            textDisplay = new TextDisplay(new Vector2(Screen.width - 300, 10), new Vector2(1920, 1080), "", 20);
+            textDisplay = new TextDisplay(new Vector2(Screen.width - 300, 10), new Vector2(Screen.width, Screen.height), "", 20);
+
+            if (!File.Exists(logPath)) {
+                var fs = new FileStream(logPath, FileMode.Create);
+                fs.Dispose();
+                File.WriteAllText(logPath, "Succeeded,Left range,Hit pos,Slash delay,wiggle duration,earliest possible reentry,RNG late attack,Y pos late attack,fps" + Environment.NewLine);
+
+            }
             Log("Initialized");
         }
 
@@ -73,10 +86,19 @@ namespace ibaldurPractice
             if (cur_frame - exitedRange[exitedRange.Count - 1] > 500 || cur_frame - enteredRange[enteredRange.Count - 2] > 500 || cur_frame - shadeAttackStart > 500) {
                 return;
             }
-            DisplayData();
+            frameCounter.StartCoroutine(LogAttempt());
+            DisplayAttemptData();
         }
 
-        public void DisplayData() {
+        public IEnumerator LogAttempt() {
+            for (int i = 0; i < 5; i++ ) {
+                yield return new WaitForFixedUpdate();
+            }
+            string attemptString = (recentSuccess ? "Succeeded," : "Failed, ") + logText + Environment.NewLine;
+            File.AppendAllText(logPath, attemptString);
+        }
+
+        public void DisplayAttemptData() {
             string newText = "";
             int leftBaldur1 = exitedRange[exitedRange.Count-2];
             int enteredBaldur1 = enteredRange[enteredRange.Count-2];
@@ -87,26 +109,16 @@ namespace ibaldurPractice
             int baldurOpens2 = baldurCloses1 + 20;
             newText += "Left range: t" + (leftBaldur1 - shadeAttackStart) + "\n";
             newText += "Shade attack: t-0 \n";
-            // newText += "Entered range: t+" + (enteredBaldur1 - shadeAttackStart) + "\n";
-            // newText += "Re-left range: t+" + (leftBaldur2 - shadeAttackStart) + "\n";
-            // newText += "Got hit: t+" + (damage - shadeAttackStart) + "\n";
             newText += $"Hit Pos {hitPos:f2}\n";
-            // newText += "Re-entered range: t+" + (enteredBaldur2 - shadeAttackStart) + "\n";
             newText += "Slash delay: " + (slash - damage) + "\n";
             newText += "Wiggle duration: " + (enteredBaldur1 - leftBaldur1) + "\n";
             newText += "Earliest possible reentry: " + (baldurOpens2 - enteredBaldur2 > 0 ? "+" : "") + (baldurOpens2 - enteredBaldur2) + "\n";
-            newText += "Late Shade attack: " + (shadeAttackStart - shadeWaiting == 0 ? "Yes" : "No") + "\n";
-            // newText += "Baldur Close time: t+" + (baldurCloses[baldurCloses.Count -1] - shadeAttackStart) + "\n";
-            // newText += "Baldur Open time: t+" + (baldurOpens[baldurOpens.Count -1] - shadeAttackStart) + "\n";
-            // newText += "Opened1: t+" + (baldurOpens[baldurOpens.Count -2] - shadeAttackStart) + "\n";
-            // newText += "Closed1: t+" + (baldurCloses[baldurCloses.Count -2] - shadeAttackStart) + "\n";
-            // newText += "Opened2: t+" + (baldurOpens[baldurOpens.Count -1] - shadeAttackStart) + "\n";
-            // newText += "Closed2: t+" + (baldurCloses[baldurCloses.Count -1] - shadeAttackStart) + "\n";
-            // newText += "opened1rel: t+" + (baldurOpens[baldurOpens.Count -2] - leftBaldur1) + "\n";
-            // newText += "closed1rel: t+" + (baldurCloses[baldurCloses.Count -2] - leftBaldur1) + "\n";
-            // newText += "opened2rel: t+" + (baldurOpens[baldurOpens.Count -1] - leftBaldur1) + "\n";
-            // newText += "closed2rel: t+" + (baldurCloses[baldurCloses.Count -1] - leftBaldur1) + "\n";
+            newText += "RNG Late attack: " + (shadeAttackStart - shadeWaiting == 0 ? "Yes" : "No") + "\n";
+            newText += "Y pos Late attack: " + (shadeAttackStart - lastDelayedAttack < 3 ? "Yes" : "No") + "\n";
             textDisplay.UpdateText(newText);
+
+            recentSuccess = false;
+            logText = $"{leftBaldur1 - shadeAttackStart},{hitPos:f2},{slash - damage},{enteredBaldur1 - leftBaldur1},{(baldurOpens2 - enteredBaldur2 > 0 ? "+" : "") + (baldurOpens2 - enteredBaldur2)},{(shadeAttackStart - shadeWaiting == 0 ? "Yes" : "No")},{(shadeAttackStart - lastDelayedAttack < 3 ? "Yes" : "No")},{frameCounter.GetFPS():f0}";
         }
         
         public int PlayerIntHook(string name) {
@@ -118,22 +130,24 @@ namespace ibaldurPractice
                             shadeWaiting = frameCounter.frameCount;
                         }), 0);
 
+                        InsertAction(fsm, "Position", new InvokeMethod(() => {
+                            if (fsm.FsmVariables.FindFsmBool("In Slash Range").Value && !fsm.FsmVariables.FindFsmBool("Same Y").Value) {
+                                shadeYWrong = true;
+                                lastDelayedAttack = frameCounter.frameCount;
+                            }
+                        }, everyFrame: true));
+
                         InsertAction(fsm, "Slash Antic", new InvokeMethod(() => {
                             shadeAttackStart = frameCounter.frameCount;
                         }));
 
                         
-
-                        // makes shade attack asap
-                        // foreach (FsmState t in fsm.FsmStates)
-                        // {
-                        //     if (t.Name != "Fly") continue;
-                        //     (t.Actions[5] as WaitRandom).timeMax = 1f;
-                        //     break;
-                        // }
-                        
                     } else if (fsm.gameObject.name == "Attack Range" && fsm.FsmName == "Attack Range Detect") {
                         InsertAction(fsm, "In Range", new InvokeMethod(() => {
+                        
+                            if (enteredRange.Count == 0 || frameCounter.frameCount - enteredRange[enteredRange.Count - 1] < 30) {
+                                shadeYWrong = false;
+                            }
                             enteredRange.Add(frameCounter.frameCount);
                         }));
                         InsertAction(fsm, "Out of Range", new InvokeMethod(() => {
@@ -145,6 +159,9 @@ namespace ibaldurPractice
                         }));
                         InsertAction(fsm, "Open", new InvokeMethod(() => {
                             baldurOpens.Add(frameCounter.frameCount);
+                        }));
+                        InsertAction(fsm, "Hit Pause", new InvokeMethod(() => {
+                            recentSuccess = true;
                         }));
                     }
                 }
@@ -181,16 +198,26 @@ namespace ibaldurPractice
     public class InvokeMethod : FsmStateAction
     {
         private readonly Action _action;
+        private readonly bool _everyFrame;
 
-        public InvokeMethod(Action a)
+        public InvokeMethod(Action a, bool everyFrame = false)
         {
             _action = a;
+            _everyFrame = everyFrame;
         }
         
         public override void OnEnter()
         {
             _action?.Invoke();
-            Finish();
+            if (!_everyFrame) {
+                Finish();
+            }
+            
+        }
+
+        public override void OnFixedUpdate()
+        {
+            _action?.Invoke();
         }
     }
 
